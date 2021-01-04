@@ -42,7 +42,7 @@ class BKGseKitClient(BKComponentClient):
 
     @staticmethod
     def _batch_request(
-            func, params, get_data=lambda x: x["data"]["info"], get_count=lambda x: x["data"]["count"], limit=500,
+        func, params, get_data=lambda x: x["data"]["list"], get_count=lambda x: x["data"]["count"], limit=500,
     ):
         """
         gsekit 并发请求接口
@@ -53,31 +53,32 @@ class BKGseKitClient(BKComponentClient):
         :param limit: 一次请求数量
         :return: 请求结果
         """
-        cur_page_param = "page"
-        page_size_param = "pagesize"
 
         # 请求第一次获取总数
-        result = func(page_param={cur_page_param: 0, page_size_param: 1}, **params)
+        result = func(page_param={"page": 1, "pagesize": limit}, **params)
 
         if not result["result"]:
             logger.error(
-                "[batch_request] {api} count request error, result: {result}".format(api=func.__name__, result=result))
+                "[batch_request] {api} count request error, result: {result}".format(api=func.__name__, result=result)
+            )
             return []
 
         count = get_count(result)
         data = []
-        start = 0
+        start = 1
 
         # 根据请求总数并发请求
         pool = ThreadPool()
         params_and_future_list = []
-        while start < count:
-            request_params = {"page_param": {page_size_param: limit, cur_page_param: start}}
+        page_count = int(count / 500) + 1
+        while start <= page_count:
+            request_params = {"page_param": {"pagesize": limit, "page": start}}
             request_params.update(params)
             params_and_future_list.append(
-                {"params": request_params, "future": pool.apply_async(func, kwds=request_params)})
+                {"params": request_params, "future": pool.apply_async(func, kwds=request_params)}
+            )
 
-            start += limit
+            start += 1
 
         pool.close()
         pool.join()
@@ -99,9 +100,10 @@ class BKGseKitClient(BKComponentClient):
         return data
 
     def process_status(
-        self, scope=None, expression_scope=None, bk_cloud_ids=None, process_status=None, is_auto=None,
+        self, bk_biz_id, scope=None, expression_scope=None, bk_cloud_ids=None, process_status=None, is_auto=None,
     ):
         params = {
+            "bk_biz_id": bk_biz_id,
             "scope": scope,
             "expression_scope": expression_scope,
             "bk_cloud_ids": bk_cloud_ids,
@@ -111,23 +113,33 @@ class BKGseKitClient(BKComponentClient):
         return self._batch_request(func=self._process_status, params=params)
 
     def _process_status(
-        self, page_param, scope=None, expression_scope=None, bk_cloud_ids=None, process_status=None, is_auto=None,
+        self,
+        bk_biz_id,
+        page_param,
+        scope=None,
+        expression_scope=None,
+        bk_cloud_ids=None,
+        process_status=None,
+        is_auto=None,
     ):
-        pagesize = page_param['pagesize']
-        page = page_param['page']
-        return self._request(
-            method="post",
-            url=_get_gse_kit_api("process/process_status"),
-            data={
-                "pagesize": pagesize,
-                "page": page,
-                "scope": scope,
-                "expression_scope": expression_scope,
-                "bk_cloud_ids": bk_cloud_ids,
-                "process_status": process_status,
-                "is_auto": is_auto,
-            },
-        )
+        pagesize = page_param["pagesize"]
+        page = page_param["page"]
+        data = {
+            "bk_biz_id": bk_biz_id,
+            "pagesize": pagesize,
+            "page": page,
+        }
+        if scope:
+            data["scope"] = scope
+        if expression_scope:
+            data["expression_scope"] = expression_scope
+        if bk_cloud_ids:
+            data["bk_cloud_ids"] = bk_cloud_ids
+        if process_status:
+            data["process_status"] = process_status
+        if is_auto:
+            data["is_auto"] = is_auto
+        return self._request(method="post", url=_get_gse_kit_api("process/process_status"), data=data,)
 
     def create_job(self, bk_biz_id, job_object, job_action, expression_scope, extra_data=None):
         """
@@ -158,9 +170,7 @@ class BKGseKitClient(BKComponentClient):
         :param bk_biz_id: string
         """
         param = {"bk_biz_id": bk_biz_id}
-        return self._request(
-            method="post", url=_get_gse_kit_api("process/flush_process"), data=param
-        )
+        return self._request(method="post", url=_get_gse_kit_api("process/flush_process"), data=param)
 
     def list_config_template(self, bk_biz_id):
         """

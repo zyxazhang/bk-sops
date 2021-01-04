@@ -29,11 +29,15 @@ class GseKitSetModuleIpSelector(LazyVariable):
     form = "%svariables/gse_kit/var_gse_kit_ip_selector.js" % settings.STATIC_URL
 
     def get_value(self):
+        if "executor" not in self.pipeline_data or "biz_cc_id" not in self.pipeline_data:
+            return ""
+
         operator = self.pipeline_data.get("executor", "")
+        bk_biz_id = int(self.pipeline_data.get("biz_cc_id", 0))
         var_ip_selector = self.value
 
         expression_scope_kwargs = {
-            "bk_set_env": var_ip_selector["var_set_name"],
+            "bk_set_env": var_ip_selector["var_set_env"],
             "bk_set_name": var_ip_selector.get("var_set_name", "*"),
             "bk_module_name": var_ip_selector.get("var_module_name", "*"),
             "service_instance_name": var_ip_selector.get("var_service_instance_name", "*"),
@@ -41,11 +45,12 @@ class GseKitSetModuleIpSelector(LazyVariable):
             "bk_process_id": var_ip_selector.get("var_process_instance_id", "*"),
         }
         client = BKGseKitClient(operator)
-        process_status_result = client.process_status(
-            expression_scope=expression_scope_kwargs
+        process_status_result = client.process_status(bk_biz_id=bk_biz_id, expression_scope=expression_scope_kwargs)
+        logger.info(
+            "process_status_result {result} with {param}".format(
+                result=process_status_result, param=expression_scope_kwargs
+            )
         )
-        logger.info("process_status_result {result} with {param}".format(result=process_status_result,
-                                                                         param=expression_scope_kwargs))
         ip_list = [process_status["bk_host_innerip"] for process_status in process_status_result]
         ip_str = ",".join(ip_list)
         return ip_str
