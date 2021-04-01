@@ -3,7 +3,7 @@ bamboo-engine 是一个通用的流程引擎，他可以解析，执行，调度
 
 **目前仅支持 python 3.6.X 版本**
 
-> 如果你还在使用 [bamboo-pipeline](https://github.com/Tencent/bk-sops/tree/sdk/bamboo-pipeline)，请参考 [如何从 bamboo-pipeline 升级至 bamboo-engine](./docs/upgrade/bamboo_pipeline_to_bamboo_engine.md) 进行升级。
+> 如果你还在使用 [bamboo-pipeline](https://github.com/Tencent/bk-sops/tree/sdk/sdk/bamboo-pipeline)，请参考 [如何从 bamboo-pipeline 升级至 bamboo-engine](./docs/upgrade/bamboo_pipeline_to_bamboo_engine.md) 进行升级。
 
 > bamboo_engine 与 bamboo_pipeline 的性能对比: [性能对比](./docs/upgrade/bamboo_pipeline_vs_bamboo_engine.md)
 
@@ -35,7 +35,7 @@ bamboo-engine 是一个通用的流程引擎，他可以解析，执行，调度
 
 bamboo-engine 是流程引擎核心模块、调度逻辑的定义和实现，并没有内置特定的引擎运行时，需要搭配实现了 `bamboo_engine.eri.interfaces.EngineRuntimeInterface` 接口的引擎运行时使用，目前提供了以下运行时可供使用：
 
-- 基于 Django，Celery 的运行时：[bamboo-pipeline](https://github.com/Tencent/bk-sops/tree/sdk/bamboo-pipeline)
+- 基于 Django，Celery 的运行时：[bamboo-pipeline](https://github.com/Tencent/bk-sops/tree/sdk/sdk/bamboo-pipeline)
 
 引擎整体架构：
 
