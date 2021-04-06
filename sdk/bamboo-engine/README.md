@@ -18,7 +18,7 @@ bamboo-engine 是一个通用的流程引擎，他可以解析，执行，调度
 
 <!-- /TOC -->
 - 使用文档
-  - [基础概念](./docs/user_guide/basic_concept.md)
+  - [核心概念](./docs/user_guide/basic_concept.md)
   - [流程编排](./docs/user_guide/flow_orchestration.md)
   - [流程构造器](./docs/user_guide/flow_builder.md)
   - [SPLICE 变量](./docs/user_guide/splice_var.md)
@@ -94,7 +94,7 @@ $ python manage.py celery worker -Q er_execute,er_schedule -l info
 
 创建并执行一个简单的流程：
 
-![](./assets/img/simple_example.png)
+![](./docs/assets/img/simple_example.png)
 
 ```python
 import time
