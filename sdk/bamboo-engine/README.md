@@ -14,7 +14,6 @@ bamboo-engine 是一个通用的流程引擎，他可以解析，执行，调度
   - [1. 安装依赖](#1-安装依赖)
   - [2. 项目初始化](#2-项目初始化)
   - [3. 执行流程](#3-执行流程)
-- [监控](#监控)
 - [benchmark](#benchmark)
 
 <!-- /TOC -->
@@ -24,13 +23,13 @@ bamboo-engine 是一个通用的流程引擎，他可以解析，执行，调度
   - [流程构造器](./docs/user_guide/flow_builder.md)
   - [SPLICE 变量](./docs/user_guide/splice_var.md)
   - [Engine API](./docs/user_guide/engine_api.md)
+  - [监控](./docs/user_guide/monitor.md)
 - 运行时文档
   - bamboo-pipeline
     - [自定义组件](./docs/user_guide/custom_component.md)
     - [运行自定义组件](./docs/user_guide/run_your_component.md)
     - [组件单元测试](./docs/user_guide/component_unit_test.md)
     - [Worker 配置](./docs/user_guide/workers.md)
-
 ## 整体设计
 
 bamboo-engine 是流程引擎核心模块、调度逻辑的定义和实现，并没有内置特定的引擎运行时，需要搭配实现了 `bamboo_engine.eri.interfaces.EngineRuntimeInterface` 接口的引擎运行时使用，目前提供了以下运行时可供使用：
@@ -177,18 +176,6 @@ print(result.data)
 ```
 
 恭喜你，你已经成功的创建了一个流程并把它运行起来了！
-
-## 监控
-
-engine 目前会向外暴露以下 prometheus 指标：
-
-- engine_running_processes(Gauge)：正在执行的引擎进程数
-- engine_running_schedules(Gauge)：正在执行的引擎调度数
-- engine_process_running_time(Histogram)：进程每次执行耗时
-- engine_schedule_running_time(Histogram)：调度每次执行耗时
-- engine_node_execute_time(Histogram)：每种节点类型每次执行耗时
-- engine_node_schedule_time(Histogram)：每种节点类型每次调度耗时
-
 ## benchmark
 
 
