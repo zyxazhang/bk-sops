@@ -12,17 +12,30 @@ specific language governing permissions and limitations under the License.
 """
 
 import logging
+import datetime
+
+from dateutil.relativedelta import relativedelta
 
 from celery import task
 from celery.decorators import periodic_task
 from celery.schedules import crontab
+from django.db import transaction, connection
 
 from pipeline.conf import default_settings
 from pipeline.core.pipeline import Pipeline
 from pipeline.engine import api, signals, states
 from pipeline.engine.core import runtime, schedule
 from pipeline.engine.health import zombie
-from pipeline.engine.models import NodeCeleryTask, NodeRelationship, PipelineProcess, ProcessCeleryTask, Status
+from pipeline.engine.models import (
+    NodeCeleryTask,
+    NodeRelationship,
+    PipelineProcess,
+    ProcessCeleryTask,
+    Status,
+    ScheduleService,
+    History,
+)
+from pipeline.models import PipelineInstance
 
 logger = logging.getLogger("celery")
 
@@ -156,3 +169,131 @@ def heal_zombie_process():
         logger.exception("An error occurred when healing zombies")
 
     logger.info("Zombie process heal finish")
+
+
+@periodic_task(run_every=(crontab(**default_settings.EXPIRED_TASK_CLEAN_CRON)), ignore_result=True)
+def expired_tasks_clean():
+    if not default_settings.EXPIRED_TASK_CLEAN:
+        logger.info("EXPIRED_TASK_CLEAN switch off, won't clean expired tasks.")
+        return
+    timestamp = datetime.datetime.now().timestamp()
+    logger.info("Expired tasks clean start, timestamp: {}".format(timestamp))
+
+    expired_create_time = datetime.date.today() - relativedelta(months=default_settings.TASK_EXPIRED_MONTH)
+    pipeline_instance_ids = list(
+        PipelineInstance.objects.filter(
+            create_time__lte=expired_create_time, is_finished=True, is_revoked=False, is_expired=False
+        )
+        .order_by("create_time")
+        .values_list("instance_id", flat=True)[: default_settings.EXPIRED_TASK_CLEAN_NUM_LIMIT]
+    )
+    logger.info(
+        "Clean expired tasks before {} with tasks number: {}, instance ids: {}, timestamp: {}".format(
+            expired_create_time, len(pipeline_instance_ids), ",".join(pipeline_instance_ids), timestamp
+        )
+    )
+
+    for instance_id in pipeline_instance_ids:
+        try:
+            logger.info("Clean expired task: {}, timestamp: {}".format(instance_id, timestamp))
+            _clean_pipeline_instance_data(instance_id, timestamp)
+        except Exception as e:
+            logger.exception(
+                "An error occurred when clean expired task instance {}: {}, {}".format(instance_id, e, timestamp)
+            )
+
+    logger.info("Expired tasks clean finish, timestamp: {}".format(timestamp))
+
+
+def _clean_pipeline_instance_data(instance_id, timestamp):
+    """
+    根据instance_id删除对应的任务数据
+    """
+    process_nodes = list(
+        set(NodeRelationship.objects.filter(ancestor_id=instance_id).values_list("descendant_id", flat=True))
+    )
+    process_nodes = [process_node for process_node in process_nodes if process_node]
+    process_nodes_str = ",".join(process_nodes)
+    process_nodes_regex = "^" + "|^".join(process_nodes) if process_nodes else ""
+    pipeline_processes = PipelineProcess.objects.filter(root_pipeline_id=instance_id).values_list("id", "snapshot__id")
+    pipeline_process_ids, process_snapshot_ids = [], []
+    for process_id, snapshot_id in pipeline_processes:
+        if process_id:
+            pipeline_process_ids.append(process_id)
+        if snapshot_id:
+            process_snapshot_ids.append(snapshot_id)
+    pipeline_process_ids_str = ",".join(pipeline_process_ids)
+    process_snapshot_ids_str = ",".join(process_snapshot_ids)
+
+    delete_subprocess_relationship = (
+        "DELETE FROM `engine_subprocessrelationship` " "WHERE `engine_subprocessrelationship`.`process_id` " "IN (%s)"
+    )
+    delete_process_snapshot = "DELETE FROM `engine_processsnapshot` WHERE `engine_processsnapshot`.`id` IN (%s)"
+    delete_pipeline_model = "DELETE FROM `engine_pipelinemodel` WHERE `engine_pipelinemodel`.`process_id` IN (%s)"
+    delete_process_celery_task = (
+        "DELETE FROM `engine_processcelerytask` WHERE `engine_processcelerytask`.`process_id` IN (%s)"
+    )
+    schedule_service_ids = list(
+        ScheduleService.objects.filter(process_id__in=pipeline_process_ids).values_list("id", flat=True)
+    )
+    schedule_service_ids = [schedule_service_id for schedule_service_id in schedule_service_ids if schedule_service_id]
+    delete_schedule_service = "DELETE FROM `engine_scheduleservice` WHERE `engine_scheduleservice`.`process_id` IN (%s)"
+    delete_multi_callback_data = (
+        "DELETE FROM `engine_multicallbackdata` WHERE `engine_multicallbackdata`.`schedule_id` IN (%s)"
+    )
+    delete_node_relationship = (
+        "DELETE FROM `engine_noderelationship` "
+        "WHERE (`engine_noderelationship`.`ancestor_id` IN (%s) "
+        "OR `engine_noderelationship`.`descendant_id` IN (%s)) "
+    )
+    delete_node_celery_tasks = "DELETE FROM `engine_nodecelerytask` " "WHERE `engine_nodecelerytask`.`node_id` IN (%s) "
+    delete_status = "DELETE FROM `engine_status` WHERE `engine_status`.`id` IN (%s)"
+    delete_data = "DELETE FROM `engine_data` WHERE `engine_data`.`id` IN (%s)"
+    delete_datasnapshot = "DELETE FROM `engine_datasnapshot` WHERE `engine_datasnapshot`.`key` REGEXP %s"
+    delete_schedule_celery_task = (
+        "DELETE FROM `engine_schedulecelerytask`" "WHERE `engine_schedulecelerytask`.`schedule_id` REGEXP %s"
+    )
+    history_data_ids = list(
+        History.objects.filter(identifier__in=process_nodes).only("data").values_list("data__id", flat=True)
+    )
+    delete_history = "DELETE FROM `engine_history` WHERE `engine_history`.`identifier` IN (%s)"
+    delete_history_data = "DELETE FROM `engine_historydata` WHERE `engine_historydata`.`id` IN (%s)"
+    delete_pipeline_process = (
+        "DELETE FROM `engine_pipelineprocess` " "WHERE `engine_pipelineprocess`.`root_pipeline_id` = %s"
+    )
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            if pipeline_process_ids_str:
+                _raw_sql_execute(cursor, delete_subprocess_relationship, pipeline_process_ids_str, timestamp)
+                _raw_sql_execute(cursor, delete_pipeline_model, pipeline_process_ids_str, timestamp)
+                _raw_sql_execute(cursor, delete_process_celery_task, pipeline_process_ids_str, timestamp)
+                _raw_sql_execute(cursor, delete_schedule_service, pipeline_process_ids_str, timestamp)
+            if process_snapshot_ids_str:
+                _raw_sql_execute(cursor, delete_process_snapshot, process_snapshot_ids_str, timestamp)
+            if schedule_service_ids:
+                _raw_sql_execute(cursor, delete_multi_callback_data, ",".join(schedule_service_ids), timestamp)
+            if process_nodes_str:
+                _raw_sql_execute(cursor, delete_node_relationship, [process_nodes_str, process_nodes_str], timestamp)
+                _raw_sql_execute(cursor, delete_node_celery_tasks, process_nodes_str, timestamp)
+                _raw_sql_execute(cursor, delete_status, process_nodes_str, timestamp)
+                _raw_sql_execute(cursor, delete_data, process_nodes_str, timestamp)
+                _raw_sql_execute(cursor, delete_history, process_nodes_str, timestamp)
+            if process_nodes_regex:
+                _raw_sql_execute(cursor, delete_datasnapshot, process_nodes_regex, timestamp)
+                _raw_sql_execute(cursor, delete_schedule_celery_task, process_nodes_regex, timestamp)
+            if history_data_ids:
+                _raw_sql_execute(cursor, delete_history_data, ",".join(history_data_ids), timestamp)
+            _raw_sql_execute(cursor, delete_pipeline_process, instance_id, timestamp)
+            PipelineInstance.objects.filter(instance_id=instance_id).update(is_expired=True)
+
+
+def _sql_log(sql, params, timestamp):
+    if isinstance(params, list):
+        logger.info("[execute raw sql]: {}, timestamp: {}".format(sql % tuple(params), timestamp))
+    else:
+        logger.info("[execute raw sql]: {}, timestamp: {}".format(sql % params, timestamp))
+
+
+def _raw_sql_execute(cursor, sql, params, timestamp):
+    _sql_log(sql, params, timestamp)
+    cursor.execute(sql, params)
